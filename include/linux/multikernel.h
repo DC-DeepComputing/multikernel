@@ -1192,6 +1192,11 @@ static inline bool mk_spawned(void)
 {
 	return false;
 }
+
+static inline bool mk_host_fenced(void)
+{
+	return false;
+}
 #endif
 
 /**
