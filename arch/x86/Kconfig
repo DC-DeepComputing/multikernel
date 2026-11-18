@@ -2026,6 +2026,10 @@ config ARCH_SUPPORTS_KEXEC_HANDOVER
 config ARCH_SUPPORTS_MULTIKERNEL
 	def_bool X86_64
 
+# The host writes its AMD IOMMUs' remapping tables, so it routes MSIs for its instances
+config MULTIKERNEL_AMD_VI_PROXY
+	def_bool MULTIKERNEL && AMD_IOMMU && IRQ_REMAP
+
 config ARCH_HAS_MK_HOST_PARK
 	def_bool X86_64
 

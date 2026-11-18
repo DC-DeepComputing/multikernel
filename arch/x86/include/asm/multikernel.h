@@ -237,6 +237,18 @@ static inline void mk_dmar_init(void)
 }
 #endif
 
+#ifdef CONFIG_MULTIKERNEL_AMD_VI_PROXY
+/* MSIs of an instance's devices, routed by the host (arch/x86/multikernel/amd_vi.c) */
+struct msi_msg;
+struct pci_dev;
+bool mk_msi_proxied(struct pci_dev *pdev);
+int mk_msi_proxy_alloc(struct pci_dev *pdev, unsigned int count, bool align,
+		       struct msi_msg *msg);
+void mk_msi_proxy_free(struct pci_dev *pdev, u32 event, unsigned int count);
+int mk_msi_proxy_map(struct pci_dev *pdev, u32 event, u32 apicid, u8 vector);
+void mk_msi_proxy_unmap(struct pci_dev *pdev, u32 event);
+#endif
+
 #endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_X86_MULTIKERNEL_H */

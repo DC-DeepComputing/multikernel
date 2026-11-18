@@ -216,7 +216,7 @@ only the boot handoff knows::
         multikernel,host-ipi-pages = <...>;
         multikernel,host-ipi-cpu = <...>;           /* the host CPU its doorbell rings, u64 */
 
-        multikernel,iommus {                        /* the host's VT-d units, on x86 */
+        multikernel,iommus {                        /* the host's IOMMUs, on x86 */
             #address-cells = <2>;
             #size-cells = <2>;
             iommu@fed90000 {
@@ -225,6 +225,12 @@ only the boot handoff knows::
                 linux,pci-domain = <0>;
                 numa-node-id = <0>;                 /* when the host knows it */
                 multikernel,irte-block = <0x100 0x100>; /* first, count; if it remaps */
+            };
+            iommu@fedc0000 {                        /* or, on AMD */
+                compatible = "multikernel,amd-vi";
+                reg = <0x0 0xfedc0000  0x0 0x4000>;
+                linux,pci-domain = <0>;
+                multikernel,irq-remap;              /* if it remaps */
             };
         };
     };
@@ -249,7 +255,11 @@ What a spawn does with its tree:
 * on x86, registers each ``multikernel,vtd`` unit as driven by the host,
   and composes the interrupt remapping entries of its devices in the
   unit's ``multikernel,irte-block``, which the host checks against the
-  lease and writes. A device names its unit in ``multikernel,iommu-base``.
+  lease and writes. A device names its unit in ``multikernel,iommu-base``;
+* on x86, asks the host for the MSIs of each device behind a
+  ``multikernel,amd-vi`` unit with ``multikernel,irq-remap``: the host
+  allocates the entries of its interrupt remapping table and delivers them
+  where the spawn says, once it has checked the lease and the CPU.
 
 The pool-CPUs list registers every CPU the instance might be handed later,
 because a kernel can only online a CPU whose physical id it enumerated at

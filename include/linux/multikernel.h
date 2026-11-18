@@ -222,6 +222,9 @@ void mk_ipi_rx_del(struct mk_instance *instance);
 #define MK_IO_MSI_MOVE      (MK_MSG_IO + 7)  /* Move a routed MSI to another of my CPUs */
 #define MK_IO_IRTE_WRITE    (MK_MSG_IO + 8)  /* Write a remapping entry I composed */
 #define MK_IO_IRTE_ACK      (MK_MSG_IO + 9)  /* Answer: 0 or an error */
+#define MK_IO_MSI_ALLOC     (MK_MSG_IO + 10) /* Set MSIs aside for a device, to route later */
+#define MK_IO_MSI_FREE      (MK_MSG_IO + 11) /* Give them back */
+#define MK_IO_MSI_UNMAP     (MK_MSG_IO + 12) /* Stop routing a device's MSI */
 
 /* Resource management subtypes */
 #define MK_RES_CPU_ADD      (MK_MSG_RESOURCE + 1)
