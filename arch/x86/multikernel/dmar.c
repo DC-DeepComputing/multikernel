@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * The host's VT-d units, as a spawn sees them:
+ * The host's VT-d units, as a spawn sees them under
+ * /chosen/multikernel,iommus (iommu.c):
  *
- *   /chosen/multikernel,iommus {
- *       #address-cells = <2>; #size-cells = <2>;
- *       iommu@fed90000 {
- *           compatible = "multikernel,vtd";
- *           reg = <base size>;
- *           linux,pci-domain = <0>;
- *           numa-node-id = <0>;			if known
- *           multikernel,irte-block = <first count>;	if it remaps
- *       };
+ *   iommu@fed90000 {
+ *       compatible = "multikernel,vtd";
+ *       reg = <base size>;
+ *       linux,pci-domain = <0>;
+ *       numa-node-id = <0>;			if known
+ *       multikernel,irte-block = <first count>;	if it remaps
  *   };
- *
- * and each PCI function node names its unit in multikernel,iommu-base.
  *
  * A unit has one interrupt remapping table, the host's, so the host lends
  * each spawn a block of it. The spawn composes its entries there; the host
@@ -35,9 +31,10 @@
 #include <linux/slab.h>
 #include <asm/multikernel.h>
 
+#include "iommu.h"
+
 /* 256 entries per spawn and unit, in an aligned block */
 #define MK_IRTE_ORDER		8
-#define MK_IOMMUS_PATH		"/chosen/multikernel,iommus"
 
 struct mk_irte_payload {
 	u64 seq;
@@ -133,28 +130,14 @@ static int mk_dt_emit_unit(void *fdt, struct mk_instance *instance,
 	return ret ? ret : fdt_end_node(fdt);
 }
 
-int mk_arch_manifest_chosen(void *fdt, struct mk_instance *instance)
+int mk_dmar_emit_units(void *fdt, struct mk_instance *instance)
 {
 	struct dmar_unit_desc unit;
-	int i, ret;
+	int i, ret = 0;
 
-	if (dmar_unit_get(0, &unit))
-		return 0;
-	ret = fdt_begin_node(fdt, "multikernel,iommus");
-	if (!ret)
-		ret = fdt_property_u32(fdt, "#address-cells", 2);
-	if (!ret)
-		ret = fdt_property_u32(fdt, "#size-cells", 2);
 	for (i = 0; !ret && !dmar_unit_get(i, &unit); i++)
 		ret = mk_dt_emit_unit(fdt, instance, &unit);
-	return ret ? ret : fdt_end_node(fdt);
-}
-
-u64 mk_arch_pci_iommu(struct pci_dev *pdev)
-{
-	u64 base;
-
-	return dmar_device_unit(pdev, &base) ? 0 : base;
+	return ret;
 }
 
 void mk_arch_instance_destroy(struct mk_instance *instance)
@@ -364,8 +347,7 @@ static int mk_irte_write(u64 unit, u32 index, u32 mask, u64 low, u64 high)
 	return ret ? ret : ack.result;
 }
 
-static void mk_irte_msg_handler(struct mk_instance *from, u32 msg_type, u32 subtype,
-				void *payload, u32 payload_len, void *ctx)
+void mk_dmar_msg(u32 subtype, void *payload, u32 payload_len)
 {
 	struct mk_irte_payload *p = payload;
 
@@ -398,9 +380,3 @@ int mk_arch_iommu_claim(u64 base)
 {
 	return intel_iommu_claim(base);
 }
-
-static int __init mk_irte_init(void)
-{
-	return mk_register_msg_handler(MK_MSG_IO, mk_irte_msg_handler, NULL);
-}
-fs_initcall(mk_irte_init);
