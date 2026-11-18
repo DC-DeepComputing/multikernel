@@ -4214,6 +4214,148 @@ int amd_iommu_create_irq_domain(struct amd_iommu *iommu)
 	}
 	return 0;
 }
+
+/*
+ * Remapping entries of a function another kernel drives. They stay in this
+ * kernel's table, which only this kernel writes: the other kernel names an
+ * entry and says where the interrupt goes. The caller checks that the
+ * entry is one it allocated for that kernel.
+ */
+static_assert(AMD_IOMMU_MAX_IRTES == MAX_IRQS_PER_TABLE_2K);
+
+static struct amd_iommu *irte_unit(struct pci_dev *pdev, u16 *devid,
+				   unsigned int *max_irqs)
+{
+	struct iommu_dev_data *dev_data;
+	struct amd_iommu *iommu;
+
+	if (!amd_iommu_irq_remap)
+		return NULL;
+	iommu = rlookup_amd_iommu(&pdev->dev);
+	if (!iommu)
+		return NULL;
+	*devid = PCI_SBDF_TO_DEVID(get_device_sbdf_id(&pdev->dev));
+	dev_data = search_dev_data(iommu, *devid);
+	*max_irqs = dev_data ? dev_data->max_irqs : MAX_IRQS_PER_TABLE_512;
+	return iommu;
+}
+
+/**
+ * amd_iommu_irte_alloc - Set remapping entries aside for a function
+ * @pdev: the function
+ * @count: how many, consecutive
+ * @align: start at a multiple of @count rounded up to a power of two, as
+ *	   multiple message MSI needs
+ * @msg: set to the message that raises the first entry
+ *
+ * The entries deliver nothing until amd_iommu_irte_route().
+ *
+ * Return: the first entry, -ENODEV if the interrupts of @pdev are not
+ * remapped, or another negative errno.
+ */
+int amd_iommu_irte_alloc(struct pci_dev *pdev, unsigned int count, bool align,
+			 struct msi_msg *msg)
+{
+	struct amd_iommu *iommu;
+	unsigned int max_irqs;
+	u16 devid;
+	int index;
+
+	iommu = irte_unit(pdev, &devid, &max_irqs);
+	if (!iommu)
+		return -ENODEV;
+	if (!count || count > max_irqs)
+		return -EINVAL;
+
+	index = alloc_irq_index(iommu, devid, count, align, pdev, max_irqs);
+	if (index >= 0)
+		fill_msi_msg(msg, index);
+	return index;
+}
+
+/**
+ * amd_iommu_irte_free - Free entries from amd_iommu_irte_alloc()
+ * @pdev: the function
+ * @index: the first entry
+ * @count: how many
+ */
+void amd_iommu_irte_free(struct pci_dev *pdev, unsigned int index,
+			 unsigned int count)
+{
+	struct amd_iommu *iommu;
+	unsigned int max_irqs;
+	u16 devid;
+
+	iommu = irte_unit(pdev, &devid, &max_irqs);
+	if (!iommu || index >= max_irqs || count > max_irqs - index)
+		return;
+	while (count--)
+		free_irte(iommu, devid, index++);
+}
+
+/**
+ * amd_iommu_irte_route - Deliver an entry to a vector of a CPU
+ * @pdev: the function
+ * @index: the entry, from amd_iommu_irte_alloc()
+ * @vector: the vector
+ * @apicid: APIC ID of the CPU
+ *
+ * Return: 0, or -EINVAL for a destination the table cannot name.
+ */
+int amd_iommu_irte_route(struct pci_dev *pdev, unsigned int index, u8 vector,
+			 u32 apicid)
+{
+	union {
+		union irte legacy;
+		struct irte_ga ga;
+	} entry;
+	struct amd_iommu *iommu;
+	unsigned int max_irqs;
+	u16 devid;
+
+	iommu = irte_unit(pdev, &devid, &max_irqs);
+	if (!iommu)
+		return -ENODEV;
+	/* An entry of vector 0 counts as free */
+	if (index >= max_irqs || vector < FIRST_EXTERNAL_VECTOR)
+		return -EINVAL;
+	/* Truncated, the interrupt would reach a CPU nobody checked */
+	if (apicid > 0xff && (!AMD_IOMMU_GUEST_IR_GA(amd_iommu_guest_ir) ||
+			      amd_iommu_xt_mode != IRQ_REMAP_X2APIC_MODE))
+		return -EINVAL;
+
+	iommu->irte_ops->prepare(&entry, APIC_DELIVERY_MODE_FIXED, false,
+				 vector, apicid, devid);
+	iommu->irte_ops->activate(iommu, &entry, devid, index);
+	return 0;
+}
+
+/**
+ * amd_iommu_irte_unroute - Stop delivering an entry
+ * @pdev: the function
+ * @index: the entry, which stays allocated
+ */
+void amd_iommu_irte_unroute(struct pci_dev *pdev, unsigned int index)
+{
+	struct irq_remap_table *table;
+	struct amd_iommu *iommu;
+	unsigned int max_irqs;
+	unsigned long flags;
+	u16 devid;
+
+	iommu = irte_unit(pdev, &devid, &max_irqs);
+	if (!iommu || index >= max_irqs)
+		return;
+	table = get_irq_table(iommu, devid);
+	if (!table)
+		return;
+
+	raw_spin_lock_irqsave(&table->lock, flags);
+	iommu->irte_ops->set_allocated(table, index);
+	raw_spin_unlock_irqrestore(&table->lock, flags);
+
+	iommu_flush_irt_and_complete(iommu, devid);
+}
 #endif
 
 MODULE_IMPORT_NS("GENERIC_PT_IOMMU");

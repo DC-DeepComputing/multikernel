@@ -12,6 +12,7 @@
 #include <linux/types.h>
 
 struct amd_iommu;
+struct msi_msg;
 struct pci_dev;
 
 /* An IOMMU this kernel drives, as another kernel needs to know it */
@@ -21,6 +22,9 @@ struct amd_iommu_unit_desc {
 	u16	segment;	/* PCI segment		*/
 	bool	irq_remap;	/* remaps the interrupts of the devices behind it */
 };
+
+/* The most entries the interrupt remapping table of a device holds */
+#define AMD_IOMMU_MAX_IRTES	2048
 
 #ifdef CONFIG_AMD_IOMMU
 
@@ -55,6 +59,15 @@ extern int amd_iommu_update_ga(void *data, int cpu, bool ga_log_intr);
 extern int amd_iommu_activate_guest_mode(void *data, int cpu, bool ga_log_intr);
 extern int amd_iommu_deactivate_guest_mode(void *data);
 
+/* Remapping entries of a function another kernel drives */
+int amd_iommu_irte_alloc(struct pci_dev *pdev, unsigned int count, bool align,
+			 struct msi_msg *msg);
+void amd_iommu_irte_free(struct pci_dev *pdev, unsigned int index,
+			 unsigned int count);
+int amd_iommu_irte_route(struct pci_dev *pdev, unsigned int index, u8 vector,
+			 u32 apicid);
+void amd_iommu_irte_unroute(struct pci_dev *pdev, unsigned int index);
+
 #else /* defined(CONFIG_AMD_IOMMU) && defined(CONFIG_IRQ_REMAP) */
 
 static inline int
@@ -76,6 +89,28 @@ static inline int amd_iommu_activate_guest_mode(void *data, int cpu, bool ga_log
 static inline int amd_iommu_deactivate_guest_mode(void *data)
 {
 	return 0;
+}
+
+static inline int amd_iommu_irte_alloc(struct pci_dev *pdev, unsigned int count,
+				       bool align, struct msi_msg *msg)
+{
+	return -ENODEV;
+}
+
+static inline void amd_iommu_irte_free(struct pci_dev *pdev, unsigned int index,
+				       unsigned int count)
+{
+}
+
+static inline int amd_iommu_irte_route(struct pci_dev *pdev, unsigned int index,
+				       u8 vector, u32 apicid)
+{
+	return -ENODEV;
+}
+
+static inline void amd_iommu_irte_unroute(struct pci_dev *pdev,
+					  unsigned int index)
+{
 }
 #endif /* defined(CONFIG_AMD_IOMMU) && defined(CONFIG_IRQ_REMAP) */
 
