@@ -14,6 +14,7 @@
 #include <linux/irqdomain.h>
 #include <linux/kernel.h>
 #include <linux/kstrtox.h>
+#include <linux/multikernel.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
@@ -778,6 +779,40 @@ static void gic_deactivate_unhandled(u32 irqnr)
 }
 
 /*
+ * A tenant maps no SPIs (gic_irq_domain_map() refuses them), so once its host
+ * is fenced, an SPI that reaches it is one the host left enabled for a device
+ * this kernel has no driver for. If it is level triggered, it is taken again
+ * the moment it is deactivated, for ever, by the one CPU it is routed to, and
+ * that CPU runs nothing else. Turn it off in the distributor: nothing of this
+ * kernel's will want it on. Before the fence it can be a live interrupt of the
+ * host's, one the distributor offered to any CPU, and must stay enabled.
+ */
+static bool gic_tenant_mask_unhandled(u32 irqnr)
+{
+	u32 offset, index = irqnr;
+
+	if (!gic_data.tenant || !mk_host_fenced())
+		return false;
+
+	switch (__get_intid_range(irqnr)) {
+	case SPI_RANGE:
+		offset = GICD_ICENABLER;
+		break;
+	case ESPI_RANGE:
+		offset = GICD_ICENABLERnE;
+		index = irqnr - ESPI_BASE_INTID;
+		break;
+	default:
+		return false;
+	}
+
+	writel_relaxed(BIT(index % 32), gic_data.dist_base + offset + index / 32 * 4);
+	gic_dist_wait_for_rwp();
+	pr_warn_ratelimited("Interrupt %u has no handler in a tenant, masked\n", irqnr);
+	return true;
+}
+
+/*
  * Follow a read of the IAR with any HW maintenance that needs to happen prior
  * to invoking the relevant IRQ handler. We must do two things:
  *
@@ -825,7 +860,8 @@ static void __gic_handle_irq(u32 irqnr, struct pt_regs *regs)
 	gic_complete_ack(irqnr);
 
 	if (generic_handle_domain_irq(gic_data.domain, irqnr)) {
-		WARN_ONCE(true, "Unexpected interrupt (irqnr %u)\n", irqnr);
+		if (!gic_tenant_mask_unhandled(irqnr))
+			WARN_ONCE(true, "Unexpected interrupt (irqnr %u)\n", irqnr);
 		gic_deactivate_unhandled(irqnr);
 	}
 }
