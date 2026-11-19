@@ -21,6 +21,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/mm.h>
+#include <linux/multikernel.h>
 
 #include "internal.h"
 #include "ram_internal.h"
@@ -851,6 +852,16 @@ static int ramoops_probe(struct platform_device *pdev)
 		pr_err("registering with pstore failed\n");
 		goto fail_buf;
 	}
+
+	/*
+	 * This memory is for the kernel that runs after this one. A
+	 * multikernel successor that takes over must not adopt it as RAM
+	 * and hand it out.
+	 */
+	err = mk_preserve_range(cxt->phys_addr, cxt->size);
+	if (err)
+		pr_warn("cannot keep a multikernel successor off the memory: %d\n",
+			err);
 
 	/*
 	 * Update the module parameter variables as well so they are visible
